@@ -68,10 +68,8 @@ func (t *Timer) reset() {
 	t.timer.Reset(randomTime)
 }
 
-const HeartBeatTimeout = 50 * time.Millisecond //20ms
-
 func (t *Timer) resetHeartBeat() { //心跳时间
-	t.timer.Reset(HeartBeatTimeout)
+	t.timer.Reset(40 * time.Millisecond)
 }
 
 // A Go object implementing a single Raft peer.
