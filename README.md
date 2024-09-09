@@ -78,7 +78,7 @@ type AppendEntriesArgs struct {
 
 ```go
 type AppendEntriesReply struct {
-	Term        int  // leader's term
+	Term        int  // 接收者 term
 	Success     bool // 如果为true，则说明leader可能更新commitIndex
 	CommitIndex int  // follower通知leader自己的CommitIndex信息，更新leader的nextIndex[i]
 }

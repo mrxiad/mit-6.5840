@@ -18,12 +18,14 @@ package raft
 //
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -69,7 +71,7 @@ func (t *Timer) reset() {
 }
 
 func (t *Timer) resetHeartBeat() { //心跳时间
-	t.timer.Reset(40 * time.Millisecond)
+	t.timer.Reset(80 * time.Millisecond)
 }
 
 // A Go object implementing a single Raft peer.
@@ -124,12 +126,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -139,17 +142,22 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var (
+		currentTerm int
+		votedFor    int
+		log         []logEntry
+	)
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil {
+		fmt.Println("decode error!")
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = log
+	}
 }
 
 // the service says it has created a snapshot that has
@@ -181,7 +189,7 @@ type RequestVoteReply struct {
 type AppendEntriesArgs struct {
 	Term         int // leader's term
 	LeaderId     int
-	PrevLogIndex int        // leader认为follower已经复制到了此位置
+	PrevLogIndex int        // leader认为follower已经复制到了此位置，可能不正确
 	PrevLogTerm  int        // 位于 PrevLogIndex 的日志条目的任期号
 	Entries      []logEntry //需要被复制的日志条目的集合。在心跳消息中，这个数组可能为空，表示没有新的日志条目需要被复制，仅仅是为了维护心跳和领导地位。
 
@@ -189,7 +197,7 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term        int  // leader's term
+	Term        int  // 接收者 term
 	Success     bool // 如果为true，则说明leader可能更新commitIndex
 	CommitIndex int  // follower通知leader自己的CommitIndex信息，更新leader的nextIndex[i]
 }
@@ -238,6 +246,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true // 投票
 		rf.timer.reset()         //重置时间
 	}
+	rf.persist() //持久化
 
 }
 
@@ -297,8 +306,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if reply.CommitIndex > args.PrevLogIndex { //2.相同index下的term不同，需要缩小一下范围
 			reply.CommitIndex = args.PrevLogIndex
 		}
+		if reply.CommitIndex < 0 {
+			reply.Success = false // 返回false,此节点日志没有跟上leader，或者有多余日志，或者日志有冲突
+			return
+		}
 		curTerm := rf.log[reply.CommitIndex].Term
-
 		for reply.CommitIndex >= 0 {
 			if rf.log[reply.CommitIndex].Term == curTerm { //todo：当前term可能不需要回退
 				reply.CommitIndex--
@@ -320,7 +332,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else { //此时更新commitIndex,并复制日志
 		rf.log = rf.log[:args.PrevLogIndex+1]    // 第一次调用的时候prevlogIndex为-1
 		rf.log = append(rf.log, args.Entries...) // 将args中后面的日志一次性全部添加进log
-
+		rf.persist()
 		if rf.lastApplied < args.LeaderCommit { //如果日志还没追赶上，就追赶日志
 			rf.commitIndex = args.LeaderCommit
 			go rf.applyLogs()
@@ -418,7 +430,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, e)
 	index = len(rf.log)
 	term = rf.currentTerm
-
+	rf.persist()
 	return index, term, true
 }
 
@@ -562,6 +574,7 @@ func (rf *Raft) convert2Follower(term int) {
 	rf.voteCount = 0
 	rf.votedFor = -1
 	rf.timer.reset()
+	rf.persist()
 }
 
 // 将日志写入管道
