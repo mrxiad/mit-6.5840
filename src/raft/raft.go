@@ -469,7 +469,7 @@ func (rf *Raft) ticker() {
 				rf.voteCount = 1
 				rf.timer.reset()
 				rf.votedFor = rf.me
-
+				rf.persist()
 				// 开始拉票选举
 				for i := 0; i < len(rf.peers); i++ {
 					if rf.me == i { // 排除自己
