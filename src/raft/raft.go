@@ -330,10 +330,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	//判断候选人的日志是否落后于自己
-	var isLast = len(rf.log)-1 >= 0 &&
-		(args.LastLogTerm < rf.log[len(rf.log)-1].Term ||
-			args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex < len(rf.log)-1)
+	//判断候选人的日志是否落后于自己(rf日志新)
+	var isLast = !rf.UpToDate(args.LastLogIndex, args.LastLogTerm)
 
 	if isLast {
 		if args.Term > rf.currentTerm { //如果对方任期比自己大，自己变为follower,不投票
@@ -377,10 +375,15 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		rf.voteCount++
 		if rf.voteCount >= (len(rf.peers)+1)/2 { // 获得大多数的选票
 			rf.state = Leader //变为leader
+			rf.votedFor = -1
+			rf.voteCount = 0
+			rf.persist()
+
 			for i := 0; i < len(rf.nextIndex); i++ {
-				rf.nextIndex[i] = len(rf.log)
-				rf.matchIndex[i] = -1
+				rf.nextIndex[i] = rf.getLastIndex() + 1
+				rf.matchIndex[i] = -1 //这个可以随便赋值,主要看nextIndex
 			}
+
 			rf.timer.resetHeartBeat() // 重制心跳时间
 		}
 	} else { //对方拒绝投票

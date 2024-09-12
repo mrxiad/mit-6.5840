@@ -38,3 +38,10 @@ func (rf *Raft) getLastIndex() int {
 func (rf *Raft) restoreLog(curIndex int) logEntry {
 	return rf.log[curIndex-rf.lastIncludedIndex-1]
 }
+
+// 如果为true,则rf日志不新,否则,rf的日志新
+func (rf *Raft) UpToDate(index, term int) bool {
+	lastTerm := rf.getLastTerm()
+	lastIndex := rf.getLastIndex()
+	return term > lastTerm || (term == lastTerm && index >= lastIndex)
+}
