@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -71,6 +72,7 @@ func (rf *Raft) getPrevLogInfo(server int) (int, int) {
 	newEntryBeginIndex := rf.nextIndex[server] - 1
 	lastIndex := rf.getLastIndex()
 	if newEntryBeginIndex > lastIndex {
+		fmt.Println("不应该出现这种情况")
 		newEntryBeginIndex = lastIndex
 	}
 	return newEntryBeginIndex, rf.restoreLogTerm(newEntryBeginIndex)

@@ -295,7 +295,9 @@ func (rf *Raft) sendElection() {
 				if reply.VoteGranted == true && rf.currentTerm == args.Term {
 					rf.voteNum += 1
 					if rf.voteNum >= len(rf.peers)/2+1 {
-
+						if rf.status == Leader { //如果已经是leader了，需要退出，防止重复初始化
+							return
+						}
 						rf.status = Leader
 						rf.votedFor = -1
 						rf.voteNum = 0
