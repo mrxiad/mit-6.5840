@@ -296,7 +296,6 @@ func (rf *Raft) sendElection() {
 					rf.voteNum += 1
 					if rf.voteNum >= len(rf.peers)/2+1 {
 
-						//fmt.Printf("[++++elect++++] :Rf[%v] to be leader,term is : %v\n", rf.me, rf.currentTerm)
 						rf.status = Leader
 						rf.votedFor = -1
 						rf.voteNum = 0
@@ -307,6 +306,7 @@ func (rf *Raft) sendElection() {
 							rf.nextIndex[i] = rf.getLastIndex() + 1
 						}
 
+						//注意,这个必须为0,如果为len(log),就会出错
 						rf.matchIndex = make([]int, len(rf.peers))
 						rf.matchIndex[rf.me] = rf.getLastIndex()
 
@@ -439,10 +439,15 @@ func (rf *Raft) leaderAppendEntries() {
 					return
 				}
 
-				if reply.Success {
+				if reply.Success { //更新nextIndex以及matchIndex,并判断commitIndex是否可以增加
 
-					rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
-					rf.nextIndex[server] = rf.matchIndex[server] + 1
+					rf.matchIndex[server] = reply.UpNextIndex - 1
+					rf.nextIndex[server] = reply.UpNextIndex
+
+					if rf.nextIndex[server] > rf.getLastIndex()+1 {
+						rf.nextIndex[server] = rf.getLastIndex() + 1
+						rf.matchIndex[server] = rf.getLastIndex()
+					}
 
 					// 外层遍历下标是否满足,从快照最后开始反向进行
 					for index := rf.getLastIndex(); index >= rf.commitIndex && index >= rf.lastIncludeIndex+1; index-- {
@@ -468,6 +473,9 @@ func (rf *Raft) leaderAppendEntries() {
 					// 如果冲突不为-1，则进行更新
 					if reply.UpNextIndex != -1 {
 						rf.nextIndex[server] = reply.UpNextIndex
+						if rf.nextIndex[server] > rf.getLastIndex()+1 {
+							rf.nextIndex[server] = rf.getLastIndex() + 1
+						}
 					}
 				}
 			}
@@ -505,7 +513,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 自身的快照Index比发过来的prevLogIndex还大，所以返回冲突的下标加1(原因是冲突的下标用来更新nextIndex，nextIndex比Prev大1
 	// 返回冲突下标的目的是为了减少RPC请求次数
 
-	if rf.lastIncludeIndex > args.PrevLogIndex { //用于D
+	if rf.lastIncludeIndex > args.PrevLogIndex { //用于3D
 		reply.Success = false
 		reply.UpNextIndex = rf.getLastIndex() + 1
 		return
@@ -514,7 +522,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 如果自身最后的快照日志比prev小说明中间有缺失日志，such 3、4、5、6、7 返回的开头为6、7，而自身到4，缺失5
 	if rf.getLastIndex() < args.PrevLogIndex {
 		reply.Success = false
-		reply.UpNextIndex = rf.getLastIndex() //假设到这里都正确复制，交给下一次rpc的时候判断
+		reply.UpNextIndex = rf.getLastIndex() + 1
 		return
 	} else {
 		if rf.restoreLogTerm(args.PrevLogIndex) != args.PrevLogTerm { //判断term是否正确
@@ -530,17 +538,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 
+	//注意:到这里reply.Success==true
 	// If an existing entry conflicts with a new one (same index
 	// but different terms), delete the existing entry and all that follow it (§5.3)
 	// Append any new entries not already in the log
 	// 进行日志的截取
 	rf.logs = append(rf.logs[:args.PrevLogIndex+1-rf.lastIncludeIndex], args.Entries...)
 	rf.persist()
-
+	reply.UpNextIndex = rf.getLastIndex() + 1
 	//If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 	// commitIndex取leaderCommit与last new entry最小值的原因是，虽然应该更新到leaderCommit，但是new entry的下标更小
 	// 则说明日志不存在，更新commit的目的是为了applied log，这样会导致日志日志下标溢出
 	if args.LeaderCommit > rf.commitIndex {
+		//可能会有leaderCommitIndex<rf.CommitIndex的情况,但这种情况一般不会出错
 		rf.commitIndex = min(args.LeaderCommit, rf.getLastIndex())
 	}
 	return

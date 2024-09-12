@@ -1,3 +1,93 @@
+# 关键struct
+
+## Raft
+
+```go
+type Raft struct {
+	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	persister *Persister          // Object to hold this peer's persisted state
+	me        int                 // this peer's index into peers[]
+	dead      int32               // set by Kill()
+
+	currentTerm int        // 当前的任期
+	votedFor    int        // 投给了谁
+	log         []logEntry // 日志条目数组
+
+	commitIndex int // 已被提交的日志索引（由matchIndex决定，保证大多数节点提交的最大commitIndex）
+	lastApplied int // 已经被应用到状态机的日志索引（lastApplied<=commitIndex)
+
+	// 仅leader使用
+	//matchIndex[i] + 1 <= nextIndex[i]
+	nextIndex  []int // 领导者计划给每个server发送的日志索引
+	matchIndex []int // 每个server已经commit的日志索引
+
+	// 快照状态
+
+	state     int   // follower/candidate/leader
+	timer     Timer //计时器
+	voteCount int   // 票数
+
+	applyChan chan ApplyMsg
+}
+```
+
+
+
+## RequestVoteArgs
+
+```go
+type RequestVoteArgs struct {
+	Term         int // 候选人的任期
+	CandidateId  int // 候选人ID
+	LastLogIndex int // 候选人最后的日志索引
+	LastLogTerm  int // 候选人最后的日志任期
+}
+```
+
+
+
+## RequestVoteReply
+
+```go
+type RequestVoteReply struct {
+	Term        int  // 投票人的当前任期
+	VoteGranted bool // true表示该节点把票投给了候选人
+}
+```
+
+
+
+## AppendEntriesArgs
+
+```go
+type AppendEntriesArgs struct {
+	Term         int // leader's term
+	LeaderId     int
+	PrevLogIndex int        // leader认为follower已经复制到了此位置
+	PrevLogTerm  int        // 位于 PrevLogIndex 的日志条目的任期号
+	Entries      []logEntry //需要被复制的日志条目的集合。在心跳消息中，这个数组可能为空，表示没有新的日志条目需要被复制，仅仅是为了维护心跳和领导地位。
+
+	LeaderCommit int //leader的commitIndex
+}
+```
+
+
+
+## AppendEntriesReply
+
+```go
+type AppendEntriesReply struct {
+	Term        int  // leader's term
+	Success     bool // 如果为true，则说明leader可能更新commitIndex
+	CommitIndex int  // follower通知leader自己的CommitIndex信息，更新leader的nextIndex[i]
+}
+```
+
+
+
+
+
 # 状态转换
 
 ### follower变为candidate
@@ -54,7 +144,7 @@
 ## 新
 
 - 如果日志的最后一条记录具有不同的任期，则任期较晚的日志更最新
-- 如果日志以相同的任期结尾，则较长的日志更新程度更高
+- 如果日志以相同的任期结尾，则较长的日志更新程度更高。
 
 
 
@@ -76,7 +166,7 @@
 
    > 原因：老leader根据MatchIndex发现CommitIndex可以增加，但是发送心跳同步follower的时候突然掉线，那么follower会当选新leader，这个时候，老leader恢复，发送心跳发现自己的Term更小，变成follower，此时follower的CommitIndex>leader的CommitIndex
 
-3. 只有当绝大多数server认为可以提交的时候，leader才会提交，并且增加CommitIndex的时机在于**下一次**leader发送rpc心跳
+3. 只有当绝大多数server认为可以提交的时候，leader才会提交，并且
 
 
 
@@ -111,13 +201,14 @@ leader认为自己应该给每个follower发送的日志索引，允许不正确
 
 ### 含义
 
-leader认为每个follower已经commit的日志索引，一般和NextIndex同步更新
+leader认为每个follower可以commit的日志索引(**此时follower的commitIndex还没更新呢**)，一般和NextIndex同步更新
 
 ### 特性
 
 1. 只有当大多数server可以提交（但没提交）日志a，leader才可以让自己的CommitIndex变成a，然后发出心跳
 2. 如果follower正常同步日志，`MatchIndex[i] == NextIndex[i]-1 == len(follower.log)-1`
 3. 一般是MatchIndex和NextIndex同步更新
+4. 不能丢弃这个变量，因为最开始，`MatchIndex=0`，但是`NextIndex=len(log)`,如果**仅仅**用NextIndex去更新leader的commitIndex，就会出错
 
  
 
@@ -131,7 +222,7 @@ leader认为每个follower已经commit的日志索引，一般和NextIndex同步
 
 ## 心跳
 
-## 快照
+
 
 # 持久化
 
