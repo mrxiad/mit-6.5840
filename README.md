@@ -263,7 +263,7 @@ leader认为每个follower可以commit的日志索引(**此时follower的commitI
 
 ### 发送者
 
-- 对方日志差太多了，就发送一次快照
+- 对方日志差太多了，就发送一次快照，因为leader不包含自身快照之前的日志了
 - 如果对方成功接受快照，则leader需要自己更新matchIndex以及nextIndex
 
 
