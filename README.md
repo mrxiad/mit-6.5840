@@ -130,7 +130,9 @@ type AppendEntriesReply struct {
 - 前提：如果leader可以增大CommitIndex，则leader的日志已经被复制到了大多数节点上
 - 当**拥有最新日志**的candidate变为leader后，将自身的**nextIndex**全都变为**自身日志长度**
 - 新leader发送心跳到老leader（如果老leader网络恢复，因为Term小，变为follower），触发一致性检查
-- 一致性检查中，老leader会**丢弃掉**自己**在网络分区中**获取到的日志
+- 一致性检查中，老leader会**丢弃掉**自己**在网络分区中**新添加的日志
+
+
 
 
 
@@ -214,13 +216,66 @@ leader认为每个follower可以commit的日志索引(**此时follower的commitI
 
 
 
-# 关键流程
+# 关键判断
 
-## 计时器
+## 选举
 
-## 投票
+### 发送者
 
-## 心跳
+- 发送args，然后接收
+
+- 判断对方任期是否大于自己，如果对方Term大，则cover2follower，return
+
+- 否则判断自己是否可以变成leader，如果变成，进行初始化操作，并且重置定时器为心跳
+
+- 如果已经是leader了，则直接退出，不要重复初始化
+
+  
+
+### 接受者
+
+- 如果对方Term大，则更新自己为follower
+- 如果对方日志旧，或者自己已经投票过别人了，则不投票
+- 否则投票，并重置计时器
+
+
+
+## 追加
+
+### 发送者
+
+- 如果能用快照更新，则发快照，return
+- 根据`nextIndex[i]`决定发多少日志，如果日志为空，那么这条rpc就是心跳
+- 接受响应后，将自身的nextIndex和matchIndex按照reply更新，并且判断能不能增加commitIndex
+
+
+
+### 接受者
+
+- 判断当前快照是否已经更新了，如果快照已经更新，则直接return即可
+- 如果`prevLogIndex>LastIndex`，说明有日志缺失
+- 如果索引上日志的Term不正确，需要回退一个Term
+- 正确的话，直接覆盖之后的日志，并将自己的commitIndex更新为leaderCommitIndex
+
+
+
+## 快照
+
+### 发送者
+
+- 对方日志差太多了，就发送一次快照
+- 如果对方成功接受快照，则leader需要自己更新matchIndex以及nextIndex
+
+
+
+### 接受者
+
+- 不需要和commitIndex比较
+- 将index之前的快照保存，并将之后的快照切割
+- 更新commitIndex以及lastApplied
+- 将信息持久化
+
+
 
 
 
@@ -241,3 +296,8 @@ log[]
 # 快照
 
 每个节点都会**存取自身的快照，快照的信息就相当于commit过后的日志。**
+
+## 注意
+
+1. peers自主更新时:`上一次快照index<目标快照index<=commitIndex`
+2. leader主动推送快照时:按照leader快照更新即可

@@ -446,6 +446,10 @@ func (rf *Raft) leaderAppendEntries() {
 					rf.matchIndex[server] = reply.UpNextIndex - 1
 					rf.nextIndex[server] = reply.UpNextIndex
 
+					if rf.matchIndex[server] != args.PrevLogIndex+len(args.Entries) {
+						fmt.Println("不应该出现的情况")
+					}
+
 					if rf.nextIndex[server] > rf.getLastIndex()+1 {
 						rf.nextIndex[server] = rf.getLastIndex() + 1
 						rf.matchIndex[server] = rf.getLastIndex()
