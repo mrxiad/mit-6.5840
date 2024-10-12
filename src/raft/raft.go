@@ -50,7 +50,7 @@ const (
 	MinVoteTime  = 75
 
 	// HeartbeatSleep 心脏休眠时间,要注意的是，这个时间要比选举低，才能建立稳定心跳机制
-	HeartbeatSleep = 35
+	HeartbeatSleep = 30
 	AppliedSleep   = 15
 )
 
@@ -219,7 +219,7 @@ func (rf *Raft) appendTicker() {
 	}
 }
 
-// 应用日志到状态机
+// 应用日志到状态机(非快照)
 func (rf *Raft) committedTicker() {
 	for rf.killed() == false {
 		time.Sleep(AppliedSleep * time.Millisecond)
@@ -658,7 +658,7 @@ func (rf *Raft) InstallSnapShot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 	rf.mu.Unlock()
 
-	rf.applyChan <- msg
+	rf.applyChan <- msg //apply快照，应用到状态机
 
 }
 
@@ -762,10 +762,11 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.currentTerm, rf.status == Leader
 }
 
+// 上层调用Start函数，同步日志
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.killed() == true {
+	if rf.killed() {
 		return -1, -1, false
 	}
 	if rf.status != Leader {

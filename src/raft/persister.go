@@ -13,8 +13,8 @@ import "sync"
 
 type Persister struct {
 	mu        sync.Mutex
-	raftstate []byte
-	snapshot  []byte
+	raftstate []byte //raft持久化信息
+	snapshot  []byte //快照信息
 }
 
 func MakePersister() *Persister {
@@ -80,4 +80,8 @@ func (ps *Persister) SnapshotSize() int {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return len(ps.snapshot)
+}
+
+func (rf *Raft) GetRaftStateSize() int {
+	return rf.persister.RaftStateSize()
 }
