@@ -317,7 +317,7 @@ func (sc *ShardCtrler) JoinHandler(servers map[int][]string) *Config {
 		newGroups[gid] = serverLists
 	}
 
-	// GroupMap: groupId -> shards
+	// GroupMap: groupId -> shards nums
 	// 记录每个分组有几个分片(group -> shards可以一对多，也因此需要负载均衡，而一个分片只能对应一个分组）
 	GroupMap := make(map[int]int)
 	for gid := range newGroups {
@@ -373,25 +373,22 @@ func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
 		delete(newGroups, leaveGid)
 	}
 
-	// GroupMap: groupId -> shards
+	// GroupMap: groupId -> shards nums
 	// 记录每个分组有几个分片(group -> shards可以一对多，也因此需要负载均衡，而一个分片只能对应一个分组）
 	GroupMap := make(map[int]int)
 	newShard := lastConfig.Shards
 
 	// 对groupMap进行初始化
 	for gid := range newGroups {
-
 		if !leaveMap[gid] {
 			GroupMap[gid] = 0
 		}
-
 	}
 
 	for shard, gid := range lastConfig.Shards {
 		if gid != 0 {
-			// 如果这个组在leaveMap中，则置为0
 			if leaveMap[gid] {
-				newShard[shard] = 0
+				newShard[shard] = InvalidGid //当前shard的gid置为0,表示该gid已经离开,需要对该shard进行重新分配
 			} else {
 				GroupMap[gid]++
 			}
@@ -419,9 +416,11 @@ func (sc *ShardCtrler) LeaveHandler(gids []int) *Config {
 // re-balance.
 func (sc *ShardCtrler) MoveHandler(gid int, shard int) *Config {
 	lastConfig := sc.configs[len(sc.configs)-1]
-	newConfig := Config{Num: len(sc.configs),
+	newConfig := Config{
+		Num:    len(sc.configs),
 		Shards: [10]int{},
-		Groups: map[int][]string{}}
+		Groups: map[int][]string{},
+	}
 
 	// 填充并赋值
 	for shards, gids := range lastConfig.Shards {
@@ -476,17 +475,17 @@ func (sc *ShardCtrler) getWaitCh(index int) chan Op {
 }
 
 // 负载均衡
-// GroupMap : gid -> servers[]
+// GroupMap : gid -> shard nums
 // lastShards : shard -> gid
 func (sc *ShardCtrler) loadBalance(GroupMap map[int]int, lastShards [NShards]int) [NShards]int {
-	length := len(GroupMap)
-	ave := NShards / length
-	remainder := NShards % length
-	sortGids := sortGroupShard(GroupMap)
+	length := len(GroupMap)              //group的数量
+	ave := NShards / length              //平均每个group分配的shard数量
+	remainder := NShards % length        //余数
+	sortGids := sortGroupShard(GroupMap) //排序后的gids（负载大的在前面）
 
 	// 先把负载多的部分free
 	for i := 0; i < length; i++ {
-		target := ave
+		target := ave //平均每个group分配的shard数量
 
 		// 判断这个数是否需要更多分配，因为不可能完全均分，在前列的应该为ave+1
 		if !moreAllocations(length, remainder, i) {
@@ -495,9 +494,9 @@ func (sc *ShardCtrler) loadBalance(GroupMap map[int]int, lastShards [NShards]int
 
 		// 超出负载
 		if GroupMap[sortGids[i]] > target {
-			overLoadGid := sortGids[i]
-			changeNum := GroupMap[overLoadGid] - target
-			for shard, gid := range lastShards {
+			overLoadGid := sortGids[i]                  //负载过大的gid
+			changeNum := GroupMap[overLoadGid] - target //需要减少的数量
+			for shard, gid := range lastShards {        //遍历所有的shard,将负载过大的gid的shard置为0
 				if changeNum <= 0 {
 					break
 				}
@@ -506,7 +505,7 @@ func (sc *ShardCtrler) loadBalance(GroupMap map[int]int, lastShards [NShards]int
 					changeNum--
 				}
 			}
-			GroupMap[overLoadGid] = target
+			GroupMap[overLoadGid] = target //更新负载
 		}
 	}
 
