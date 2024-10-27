@@ -24,6 +24,11 @@ const NShards = 10
 // Please don't change this.
 // 最多有10个分片
 type Config struct {
+	/*
+		根据key2shard函数,找到对应的shard
+		然后根据shard找到对应的gid
+		最后根据gid找到对应的servers
+	*/
 	Num    int              // config number
 	Shards [NShards]int     // shard -> gid
 	Groups map[int][]string // gid -> servers[]

@@ -1,0 +1,1 @@
+for i in {1..10}; do echo "Running 5B test iteration $i..."; go test -race; if [ $? -ne 0 ]; then echo "Test iteration $i failed!"; exit 1; fi; done
