@@ -27,11 +27,11 @@ const (
 )
 
 type Shard struct {
-	KvMap     map[string]string
-	ConfigNum int // what version this Shard is in
+	KvMap     map[string]string //kv
+	ConfigNum int               // what version this Shard is in
 }
 
-type Op struct {
+type Op struct { //节点间需要同步的参数
 
 	// Your definitions here.
 	// Field names must start with capital letters,
@@ -41,14 +41,14 @@ type Op struct {
 	OpType   Operation // "get" "put" "append"
 	Key      string
 	Value    string
-	UpConfig shardctrler.Config
+	UpConfig shardctrler.Config //更新的配置
 	ShardId  int
 	Shard    Shard
 	SeqMap   map[int64]int
 }
 
 // OpReply is used to wake waiting RPC caller after Op arrived from applyCh
-type OpReply struct {
+type OpReply struct { //返回给client
 	ClientId int64
 	SeqId    int
 	Err      Err
@@ -71,10 +71,11 @@ type ShardKV struct {
 	Config     shardctrler.Config // 需要更新的最新的配置
 	LastConfig shardctrler.Config // 更新之前的配置，用于比对是否全部更新完了
 
+	//kvmap
 	shardsPersist []Shard // ShardId -> Shard 如果KvMap == nil则说明当前的数据不归当前分片管
 	waitChMap     map[int]chan OpReply
-	SeqMap        map[int64]int
-	sck           *shardctrler.Clerk // sck is a client used to contact shard master
+	SeqMap        map[int64]int      //clientID -> seq,去重相同请求
+	sck           *shardctrler.Clerk // 当前server需要请求其他server
 }
 
 //-------------------------------------------------初始化(Start)部分------------------------------------------------------
@@ -535,7 +536,6 @@ func (kv *ShardKV) ifDuplicate(clientId int64, seqId int) bool {
 }
 
 func (kv *ShardKV) getWaitCh(index int) chan OpReply {
-
 	ch, exist := kv.waitChMap[index]
 	if !exist {
 		kv.waitChMap[index] = make(chan OpReply, 1)
@@ -565,6 +565,7 @@ func (kv *ShardKV) allReceived() bool {
 	return true
 }
 
+// 将command下放到raft层,并等待结果返回
 func (kv *ShardKV) startCommand(command Op, timeoutPeriod time.Duration) Err {
 	kv.mu.Lock()
 	index, _, isLeader := kv.rf.Start(command)
@@ -595,7 +596,7 @@ func (kv *ShardKV) startCommand(command Op, timeoutPeriod time.Duration) Err {
 	}
 }
 
-// 判断当前节点是否处于迁移期
+// 复制Shard
 func (kv *ShardKV) cloneShard(ConfigNum int, KvMap map[string]string) Shard {
 
 	migrateShard := Shard{
