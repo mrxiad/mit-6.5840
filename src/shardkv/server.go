@@ -60,9 +60,9 @@ type ShardKV struct {
 	rf           *raft.Raft
 	applyCh      chan raft.ApplyMsg
 	makeEnd      func(string) *labrpc.ClientEnd
-	gid          int
-	masters      []*labrpc.ClientEnd
-	maxRaftState int // snapshot if log grows this big
+	gid          int                 //当前server属于的group
+	masters      []*labrpc.ClientEnd //其他server,用于初始化sck
+	maxRaftState int                 // snapshot if log grows this big
 
 	// Your definitions here.
 
@@ -71,7 +71,6 @@ type ShardKV struct {
 	Config     shardctrler.Config // 需要更新的最新的配置
 	LastConfig shardctrler.Config // 更新之前的配置，用于比对是否全部更新完了
 
-	//kvmap
 	shardsPersist []Shard // ShardId -> Shard 如果KvMap == nil则说明当前的数据不归当前分片管
 	waitChMap     map[int]chan OpReply
 	SeqMap        map[int64]int      //clientID -> seq,去重相同请求
@@ -259,12 +258,14 @@ func (kv *ShardKV) ConfigDetectedLoop() {
 				SeqMap[k] = v
 			}
 			for shardId, gid := range kv.LastConfig.Shards {
-
-				// 将最新配置里不属于自己的分片分给别人
+				/*
+					1.当前分片 shardId 在上一个配置中属于当前组 kv.gid。
+					2.在最新配置中，分片 shardId 不再属于当前组。
+					3.当前分片的配置编号小于最新配置的编号。
+					如果所有条件满足，说明需要将该分片转移给其他组。
+				*/
 				if gid == kv.gid && kv.Config.Shards[shardId] != kv.gid && kv.shardsPersist[shardId].ConfigNum < kv.Config.Num {
-
 					sendDate := kv.cloneShard(kv.Config.Num, kv.shardsPersist[shardId].KvMap)
-
 					args := SendShardArg{
 						LastAppliedRequestId: SeqMap,
 						ShardId:              shardId,
@@ -282,7 +283,6 @@ func (kv *ShardKV) ConfigDetectedLoop() {
 
 					// 开启协程对每个客户端发送切片(这里发送的应是别的组别，自身的共识组需要raft进行状态修改）
 					go func(servers []*labrpc.ClientEnd, args *SendShardArg) {
-
 						index := 0
 						start := time.Now()
 						for {
@@ -292,8 +292,6 @@ func (kv *ShardKV) ConfigDetectedLoop() {
 
 							// 如果给予切片成功，或者时间超时，这两种情况都需要进行GC掉不属于自己的切片
 							if ok && reply.Err == OK || time.Now().Sub(start) >= 2*time.Second {
-
-								// 如果成功
 								kv.mu.Lock()
 								command := Op{
 									OpType:   RemoveShardType,
@@ -423,8 +421,7 @@ func (kv *ShardKV) AddShard(args *SendShardArg, reply *AddShardReply) {
 
 //------------------------------------------------------handler部分------------------------------------------------------
 
-// 更新最新的config的handler
-func (kv *ShardKV) upConfigHandler(op Op) {
+func (kv *ShardKV) upConfigHandler(op Op) { // 更新最新的config的handler
 	curConfig := kv.Config
 	upConfig := op.UpConfig
 	if curConfig.Num >= upConfig.Num {
@@ -437,12 +434,13 @@ func (kv *ShardKV) upConfigHandler(op Op) {
 			kv.shardsPersist[shard].ConfigNum = upConfig.Num
 		}
 	}
+	//此时,如果某个shard已经不属于当前gid,则等待发送给其他组,然后移除
 	kv.LastConfig = curConfig
 	kv.Config = upConfig
 
 }
 
-func (kv *ShardKV) addShardHandler(op Op) {
+func (kv *ShardKV) addShardHandler(op Op) { //当前server多增加管理一个shard数据
 	// this shard is added or it is an outdated command
 	if kv.shardsPersist[op.ShardId].KvMap != nil || op.Shard.ConfigNum < kv.Config.Num {
 		return
@@ -457,7 +455,7 @@ func (kv *ShardKV) addShardHandler(op Op) {
 	}
 }
 
-func (kv *ShardKV) removeShardHandler(op Op) {
+func (kv *ShardKV) removeShardHandler(op Op) { //删除ShardID的kv,表示自己不再负责
 	if op.SeqId < kv.Config.Num {
 		return
 	}
@@ -525,7 +523,7 @@ func (kv *ShardKV) killed() bool {
 	return z == 1
 }
 
-// 传入op的SeqId此次op
+// 判断是否重复
 func (kv *ShardKV) ifDuplicate(clientId int64, seqId int) bool {
 
 	lastSeqId, exist := kv.SeqMap[clientId]
@@ -535,6 +533,7 @@ func (kv *ShardKV) ifDuplicate(clientId int64, seqId int) bool {
 	return seqId <= lastSeqId
 }
 
+// 用于raft中接受leader的commit
 func (kv *ShardKV) getWaitCh(index int) chan OpReply {
 	ch, exist := kv.waitChMap[index]
 	if !exist {
@@ -546,7 +545,12 @@ func (kv *ShardKV) getWaitCh(index int) chan OpReply {
 
 func (kv *ShardKV) allSent() bool {
 	for shard, gid := range kv.LastConfig.Shards {
-		// 如果当前配置中分片中的信息不匹配，且持久化中的配置号更小，说明还未发送
+		/*
+			1.当前分片 shardId 在上一个配置中属于当前组 kv.gid。
+			2.在最新配置中，分片 shardId 不再属于当前组。
+			3.当前分片的配置编号小于最新配置的编号。
+			如果所有条件满足，说明需要将该分片转移给其他组。
+		*/
 		if gid == kv.gid && kv.Config.Shards[shard] != kv.gid && kv.shardsPersist[shard].ConfigNum < kv.Config.Num {
 			return false
 		}
@@ -556,8 +560,12 @@ func (kv *ShardKV) allSent() bool {
 
 func (kv *ShardKV) allReceived() bool {
 	for shard, gid := range kv.LastConfig.Shards {
-
-		// 判断切片是否都收到了
+		/*
+			1.当前分片 shardId 在上一个配置中不属于当前组 kv.gid。
+			2.在最新配置中，分片 shardId 属于当前组。
+			3.当前分片的配置编号小于最新配置的编号。
+			如果所有条件满足，说明需要将该分片转移给其他组。
+		*/
 		if gid != kv.gid && kv.Config.Shards[shard] == kv.gid && kv.shardsPersist[shard].ConfigNum < kv.Config.Num {
 			return false
 		}
@@ -598,7 +606,6 @@ func (kv *ShardKV) startCommand(command Op, timeoutPeriod time.Duration) Err {
 
 // 复制Shard
 func (kv *ShardKV) cloneShard(ConfigNum int, KvMap map[string]string) Shard {
-
 	migrateShard := Shard{
 		KvMap:     make(map[string]string),
 		ConfigNum: ConfigNum,

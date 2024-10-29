@@ -71,9 +71,7 @@ func (ck *Clerk) Join(servers map[int][]string) {
 	args := JoinArgs{Servers: servers, ClientId: ck.clientId, SeqId: ck.seqId}
 	serverId := ck.leaderId
 	for {
-
 		reply := JoinReply{}
-		//fmt.Printf("[ ++++Client[%v]++++] : send a Join,args:%+v,serverId[%v]\n", ck.clientId, args, serverId)
 		ok := ck.servers[serverId].Call("ShardCtrler.Join", &args, &reply)
 
 		if ok {
@@ -85,8 +83,6 @@ func (ck *Clerk) Join(servers map[int][]string) {
 				continue
 			}
 		}
-
-		// 节点发生crash等原因
 		serverId = (serverId + 1) % len(ck.servers)
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -134,8 +130,6 @@ func (ck *Clerk) Move(shard int, gid int) {
 				continue
 			}
 		}
-
-		// 节点发生crash等原因
 		serverId = (serverId + 1) % len(ck.servers)
 		time.Sleep(100 * time.Millisecond)
 	}

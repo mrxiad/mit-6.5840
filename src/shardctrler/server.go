@@ -95,7 +95,6 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 	// 封装Op传到下层start
 	op := Op{OpType: JoinType, SeqId: args.SeqId, ClientId: args.ClientId, JoinServers: args.Servers}
-	//fmt.Printf("[ ----Server[%v]----] : send a Join,op is :%+v \n", sc.me, op)
 	lastIndex, _, _ := sc.rf.Start(op)
 
 	ch := sc.getWaitCh(lastIndex)
@@ -111,7 +110,6 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 
 	select {
 	case replyOp := <-ch:
-		//fmt.Printf("[ ----Server[%v]----] : receive a JoinAsk :%+v,replyOp:+%v\n", sc.me, args, replyOp)
 		if op.ClientId != replyOp.ClientId || op.SeqId != replyOp.SeqId {
 			reply.Err = ErrWrongLeader
 		} else {
@@ -173,7 +171,6 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 
 	// 封装Op传到下层start
 	op := Op{OpType: MoveType, SeqId: args.SeqId, ClientId: args.ClientId, MoveShard: args.Shard, MoveGid: args.GID}
-	//fmt.Printf("[ ----Server[%v]----] : send a MoveOp,op is :%+v \n", sc.me, op)
 	lastIndex, _, _ := sc.rf.Start(op)
 
 	ch := sc.getWaitCh(lastIndex)
